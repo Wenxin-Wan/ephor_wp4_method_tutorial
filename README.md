@@ -1,1 +1,9 @@
 # ephor_wp4_method_tutorial
+
+This R tutorial is associated with the EPHOR deliverable report D4.1 on the “multiple exposure methods”. In that report, we gave a summary table of over 40 statistical approaches that may be useful for the exposome analyses, and highlighted three methods that demonstrate potentially sufficient utility to EPHOR project for different analytical purposes: LASSO, Random forest, and BKMR (Bayesian Kernel Machine Regression).
+
+The aim of this R tutorial is to demonstrate how the three methods can be applied to a sample data. It is our hope that this tutorial could support readers to apply the three methods to their own analyses, however, because the three methods have been widely applied in many other fields, it is highly encouraged to also refer to other sources of tutorials to if necessary.
+
+We also recommend readers to read key review articles (highlighted in the deliverable report - Appendix B: Method selection) that present more comprehensive review and discussion of statistical methods and research questions regarding multiple exposure/mixture modelling. Reader could also refer to the Appendix D in our report, where you can find a inventory of over 40 methods that can be used for multiple exposure modelling.
+
+We assume that readers have a basic skill and knowledge in R programming. If needed, many resources online can be used to get familiar with R and/or to further develop your skills, for examples, ISLR, or interactive R basics. In this series of script, we will mainly use tidyverse package to process data because it is simple, more human-readable, and more reproducible. If you need a practical guide on tidyverse, we recommend this book Machine Learning with R, the tidyverse, and mlr to get you started with. Generative AI tool such as ChatGPT may be useful in assisting the data manipulation and modelling, but careful checking and testing of its reliability should be kept in mind at all time.
