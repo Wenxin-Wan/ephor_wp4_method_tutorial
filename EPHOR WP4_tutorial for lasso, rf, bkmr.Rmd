@@ -1,0 +1,727 @@
+---
+title: "R tutorial_application of three machine learning methods"
+author: "w.wan@uu.nl"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  pdf_document:
+    toc: yes
+  html_notebook:
+    toc: yes
+---
+
+# **R tutorial: application of three machine learning methods**
+
+Authors: Wenxin Wan ([w.wan\@uu.nl](mailto:w.wan@uu.nl){.email}); Dr Lützen Portengen ([l.portengen\@uu.nl](mailto:l.portengen@uu.nl){.email}) and Dr Susan Peters ([s.peters\@uu.nl](mailto:s.peters@uu.nl){.email})
+
+## 1. Background
+
+This R tutorial is associated with the [EPHOR deliverable report D4.1](https://cordis.europa.eu/project/id/874703/results) on the "multiple exposure methods". In that report, we gave a summary table of over 40 statistical approaches that may be useful for the exposome analyses, and highlighted three methods that demonstrate potentially sufficient utility to EPHOR project for different analytical purposes: LASSO, Random forest, and BKMR (Bayesian Kernel Machine Regression).
+
+*The aim of this R tutorial* is to demonstrate how the three methods can be applied to a sample data. It is our hope that this tutorial could support readers to apply the three methods to their own analyses, however, because the three methods have been widely applied in many other fields, it is highly encouraged to also refer to other sources of tutorials to if necessary. 
+
+We also recommend readers to read key review articles (highlighted in the deliverable report - Appendix B: Method selection) that present more comprehensive review and discussion of statistical methods and research questions regarding multiple exposure/mixture modelling. Reader could also refer to the Appendix D in our report, where you can find a inventory of over 40 methods that can be used for multiple exposure modelling.
+
+We assume that readers have a basic skill and knowledge in R programming. If needed, many resources online can be used to get familiar with R and/or to further develop your skills, for examples, [ISLR](https://trevorhastie.github.io/ISLR/.), or [interactive R basics](https://rstudio.github.io/learnr/). In this series of script, we will mainly use *tidyverse* package to process data because it is simple, more human-readable, and more reproducible. If you need a practical guide on tidyverse, we recommend this book [Machine Learning with R, the tidyverse, and mlr](https://livebook.manning.com/book/machine-learning-for-mortals-mere-and-otherwise/chapter-1/v-4/61) to get you started with. Generative AI tool such as ChatGPT may be useful in *assisting* the data manipulation and modelling, but careful checking and testing of its reliability should be kept in mind at all time.
+
+## 2. Data
+
+```{r load required R packages, include=FALSE}
+
+### note that you need to install the packages 
+
+require(visdat)  #other packages available for descrip. [link](https://arxiv.org/abs/1904.02101)
+require(caret)
+require(tidyverse)
+require(dplyr)
+require(ggridges)
+require(ggplot2)
+require(corrplot)
+require(magrittr)
+require(plotly)
+require(readxl)
+require(glmnet) # for lasso model
+require(stabs) # for stability selection
+require(randomForest) # basic implementation
+require(ranger)       # a faster implementation of randomForest, will use this for tuning the random forest
+require(caret)        # an aggregator package for performing many machine learning models
+# require(tuneRanger)   # a tool to tune random forest model with ranger package
+require(vip) # we use this package to properly visualise the importance
+require(caret)
+require(iml)
+require(ggrepel)
+require(reshape2)
+require(gridExtra)
+require(kernelshap)
+require(shapviz)
+require(fastshap)
+require(shapviz)
+require(randomForestSRC)
+require(bkmr)
+require(bkmrhat) 
+require(future) # parallel computation enabled
+
+```
+
+
+### 2.1 Consideration of the pre-processing steps
+
+Here are some initial steps an analyst usually take before applying various statistical models. Although this is out of the current scope of the analy
+
+**Cleaning Data**: Begin by addressing any inconsistencies or errors in your dataset, such as typos or incorrect values. This foundational step ensures the reliability of your analysis.
+
+**Managing Missing Data**:
+Imputation: Estimate and replace missing values to maintain the integrity of your dataset. Techniques vary from simple averages to more complex methods like multiple imputation with [multiple imputation](https://epirhandbook.com/en/missing-data.html?q=missing#imputation).
+Omission: In cases where imputation might not be appropriate, consider omitting records with missing values, especially if such records are few and not critical to your analysis.
+
+**Feature Selection**:
+Correlation Analysis: Identify and possibly remove features that are highly correlated with each other to reduce redundancy and improve model performance.
+
+**Data Transformation**:
+Normalization and Scaling: Adjust the scale of the data so that features with larger magnitudes don’t disproportionately influence the model.
+Log Transformation: Apply log transformation to skewed data to stabilize variance across observations, which is particularly beneficial for linear models.
+Encoding Categorical Variables: Convert categorical variables into a numerical format that machine learning models can interpret, typically using one-hot encoding or similar techniques.
+
+**Dealing with Outliers**: Identify and address outliers that could distort the model’s performance. Strategies may involve trimming extreme values or applying transformations to reduce their impact.
+
+**Feature Engineering** (Optional but Recommended): This involves creating new features from the existing ones to improve model performance. Techniques can include aggregating features, generating polynomial features, or crafting features based on domain knowledge.
+
+Here are some codes that can be used to carry out these tasks. Note that these are reference codes only so they cannot be applied to this tutorial, because the data for this tutorial have been carefully imputed and cleaned.
+
+### 2.2 General info of the dataset
+
+```{r include=FALSE}
+
+## make sure that the R project file, the script, and the data_2_csv are in the same folder.
+
+# import and process data
+data <- read.csv("data_2.csv") %>% 
+  select(c(2:35)) %>% # remove redundant first column
+  # transform sex and smoking to factor type data
+  mutate(sex = as.factor(sex),
+         smoking_status = as.factor(smoking_status))
+
+# what the data look like by looking at the first few rows?
+head(data) 
+
+# how many rows and columns?
+dim(data) 
+
+```
+
+
+This dataset contains information from 364 individuals who provided blood samples to a biobank in a cohort study. The blood samples have been analyzed for a variety of markers, including markers of exposure, inflammatory proteins and RNA levels. We will use only one protein as our outcome of interest.
+
+*what are the basic features of the dataset?*
+
+We can see that we have 364 subjects and 34 columns of data. Among the 34 columns, there are 28 exposure variables, basic demographic features including sex, age, BMI, smoking status (C: current; N: never; F: former smoker). We have one outcome variable.
+
+
+### 2.3 Distribution of exposure variables
+
+Before we carry out any analysis, it is important to look at the distributions of the exposure data and decide if any transformation is needed.
+
+```{r}
+
+# We first look at the distribution of transformed exposure levels
+
+# Reshape `data` from wide to long format, targeting columns 6 to 33.
+data %>%
+  pivot_longer(cols = 6:33, names_to = "exposure", values_to = "level") %>%
+  # Convert the 'exposure' column into a factor for categorical plotting.
+  mutate(exposure = factor(exposure)) %>% 
+  # Create a boxplot with 'level' on the x-axis and colored by 'exposure'.
+  ggplot(mapping = aes(x = level, y = exposure, fill = exposure)) +
+  geom_boxplot() +
+  # Apply a theme to improve the plot's appearance, adjusting font size and axis labels.
+  theme_ridges(font_size = 10, center_axis_labels = T) + 
+  # Hide the legend for a cleaner plot.
+  theme(legend.position = "none")
+
+### we noticed some outliers for exposure_24. It is then recommended to run a check of outliers across all exposures and remove them if necessary.
+
+data <- data %>%
+  # Apply a function across the specified columns to detect and remove outliers
+  mutate(across(6:33, ~{
+    # Calculate the IQR for each column
+    Q1 <- quantile(., 0.25)
+    Q3 <- quantile(., 0.75)
+    IQR <- Q3 - Q1
+    # Define the lower and upper bounds for outliers as the 10 times of the IQR for each exposure, alternative approach can be used depends on the data feature
+    lower_bound <- Q1 - 10 * IQR
+    upper_bound <- Q3 + 10 * IQR
+    # Replace outliers with NA (or choose another method of handling them)
+    ifelse(. < lower_bound | . > upper_bound, NA, .)
+  })) %>%
+  # Optional: Remove rows with NA values if they were introduced by outlier replacement
+  # This step is optional and depends on how you wish to handle the rows with outliers
+  drop_na()
+
+```
+
+From the first plot, We can see that most of the exposures variable have mostly very low levels (close to 0). Additionally, there is a need to rescale all the exposure variables becuase of the observed various scales.
+
+To get a closer look at the distribution, you can also draw boxplots for the interested exposures, for example, the first eight exposures.
+
+```{r}
+
+boxplot(data[,6:13])
+
+```
+
+
+### 2.4 Correlation patterns of exposure variables
+
+We then need to examine the correlation (extent of) among all exposure variables. Commonly used visualisation is heatmap.
+ 
+```{r}
+
+corrplot(cor(data[,6:33]), 
+         method = "color", 
+         type = "upper", 
+         order = "hclust", # we order the exposure based on their clusters 
+         hclust.method = "ward.D", # we use ward.d method to cluster the exposures
+         tl.cex = 0.8, # define the exposure name text font
+         tl.col = "black")
+
+```
+
+We can then observe exposures clustered on the top left show substantial degree of correlation (Pearson r >0.5). Some other substantial pair-wise correlations can also be seen along the diagonal line.  
+
+In real world settings where more information on the exposures is available, the correlation patterns would be very helpful in variable pre-selection, given the correlated variables usually contain very similar information. 
+
+### 2.5 Simple regression models
+
+We then apply simple linear regression models to explore the relationships between each individual exposure and outcome, after adjusting for sex, age, bmi, and smoking status. 
+
+
+```{r}
+options(digits = 2)
+
+# prepare the output table
+uni_result <- data.frame(matrix(NA, nrow = 28, ncol = 5)) # specify the output table 
+colnames(uni_result)[1:5] <- c("exposure" ,"Estimate", "lower_ci", "upper_ci", "p_val")
+
+
+# prepare the exposure and co-variate vectors
+cov_var <- colnames(data[,2:5])
+exp_var <- colnames(data[,6:33]) 
+
+# scale the exposure variables
+data_lm <- data %>% 
+  mutate(across(6:33, scale))
+
+
+# run loop function where we regress the outcome on each of the exposures
+for (i in seq_along(exp_var)) {
+  my_formula <- as.formula(paste("outcome ~ ", noquote(paste(exp_var[i])),"+", paste(cov_var, collapse = " + "))) # we specify the formula here so we control for the cov_var(s) for effect estimate from each exposure variable
+  fit <- lm(formula = my_formula,
+            data = data_lm)
+  uni_result[i,1] <- exp_var[i]
+  uni_result[i,2] <- fit$coefficients[2]
+  uni_result[i,3] <- confint(fit)[2,1]
+  uni_result[i,4] <- confint(fit)[2,2]
+  uni_result[i,5] <- coef(summary(fit))[,'Pr(>|t|)'][2]
+}
+
+# uni_result, ordered by the p_value (small to large)
+head(uni_result[order(uni_result$p_val),])
+
+``` 
+
+```{r presentation of regression results}
+
+uni_result$NegLogPValue <- -log10(uni_result$p_val)
+ggplot(uni_result, aes(x = Estimate, y = NegLogPValue)) +
+  geom_point(aes(color = p_val < 0.05), alpha = 0.65) +  # Points, color-coded for significance
+
+  # Customizing the plot
+  scale_color_manual(values = c("lightskyblue4", "red4")) +  # Red for significant results
+  geom_hline(yintercept = -log10(0.05), linetype = "dotted", color = "maroon", size = 0.6) +  # Significance threshold line
+  geom_hline(yintercept = -log10(0.05/28), linetype = "dotted", color = "maroon", size = 0.6) + 
+  geom_vline(xintercept = 0, linetype = "dotted", color = "darkslategray4") +
+  labs(
+   # title = "Volcano Plot of ExWAs Associations",
+       x = "Effect estimate from 1 SD increase in exposure",
+       y = "-log10(p-value)",
+       color = "Significant") +
+  # theme_solarized_2() +
+  theme_bw()+
+  theme(legend.position = "none") +
+  # Optionally, you can add labels to highly significant points
+  geom_text_repel(aes(label = ifelse(p_val < 0.05, as.character(exposure), "")),
+                  size = 4, box.padding = 0.35, point.padding = 0.5,
+                  max.overlaps = 10)
+
+
+```
+
+As we computed the -log(p_value), the points higher up above the red line could be identified as exposures that stand out in the single regression models. These exposures are, in an order of strength of evidence:
+
+exposure_3	
+exposure_13	
+exposure_10
+exposure_12	
+
+
+We will come back to these results/exposures when we compare the results from other methods in the following sections. 
+
+###2.6 Multiple linear regression
+ 
+ 
+We perhaps would also like to fit a multiple linear regression to all the exposures, if they are in any case all considered relevant for the outcome. Note that by fitting a multiple linear model we, to a certain extent, control for other exposures presented. 
+
+```{r include=FALSE}
+# fit the MLR model
+fit <- lm(outcome ~., 
+          data = data[,-1])
+
+# obtain outputs
+summary(fit)
+
+```
+
+Again, we found the exposure_3, exposure_13,  and exposure_4 are statistically "significantly" associated with the outcome. Note that some exposures showed strong signals in the univariate regression do not appear here in the MLR. 
+
+
+## 3. LASSO
+
+LASSO (Least Absolute Shrinkage and Selection Operator) is a regularization method used in linear regression to prevent overfitting by adding a penalty term to the loss function. The penalty term is the sum of the absolute values of the coefficients, multiplied by a scalar known as the regularization parameter. This causes some coefficients to become exactly zero, effectively performing feature selection.
+
+In environmental epidemiology, Lasso can be used to identify the most important environmental exposures that are associated with a particular health outcome, such as cancer, or the heavy metals that are most strongly associated with developmental disorders in children.
+
+
+### 3.1 Develop LASSO model
+
+```{r}
+
+# standardize the exposure data, note that it is often important to standardise the exposure data for lasso regression
+
+x <- scale(as.matrix(data[,6:33]))
+
+# Lasso Regression with cross-validation
+lasso.fit <- cv.glmnet(x = as.matrix(data[,6:33]), 
+                       y = data$outcome, 
+                       alpha = 1)# here alpha = 1 tells the algorithm to fit a lasso model
+
+
+# plot cross-validated mean error for different values of lambda
+plot(lasso.fit)
+
+
+plot(lasso.fit$glmnet.fit, "lambda", label=TRUE)
+abline(v = log(lasso.fit$lambda.min), col = "red", lty = "dashed")
+abline(v = log(lasso.fit$lambda.1se), col = "blue", lty = "dashed")
+
+#display the regularized variable co-efficients using lambda chosen by CV
+lasso_coef = predict(lasso.fit, 
+                     type = "coefficients", 
+                     s = lasso.fit$lambda.min)[1:20,]
+
+lasso_coef[lasso_coef != 0] 
+
+```
+
+The plot can help us identify the optimal regularization parameter, which balances the model's ability to fit the data and the magnitude of the coefficients. Features with coefficients that shrink to zero as the regularization strength increases are considered less important.
+
+lambda.1se, as represented by the blue dashed line, is the value of the regularization parameter that gives the most parsimonious model with the lowest mean-squared error, while still keeping the magnitude of the coefficients relatively large.
+
+To generate confidence intervals (CIs) for a Lasso model, you can use bootstrapping or asymptotic theory. Both methods provide estimates of the uncertainty of the model coefficients, but bootstrapping may be more reliable for smaller sample sizes or for models that violate the assumptions of asymptotic theory. Bootstrapping involves resampling the data with replacement to generate multiple estimates of the model coefficients. The distribution of these estimates can then be used to generate CIs for each coefficient.
+
+We will also use stability selection to further validate the model. Stability selection is a method for feature selection that uses subsampling to estimate the stability of feature selection across different subsets of the data. The idea is to repeat the feature selection process on different subsets of the data and then use a threshold to determine which features are selected across a majority of the subsets.
+
+### 3.2 Stability selection
+
+```{r}
+
+# Stability selection
+stabs_fit <- stabsel(x = as.matrix(data[,6:33]), 
+                     y = data$outcome, 
+                     fitfun = glmnet.lasso, 
+                     cutoff = 0.75,
+                     # q = 10)
+                     PFER = 1)
+
+# plot the exposure selection scores
+plot.stabsel(stabs_fit, main = "Stability selection from LASSO")
+
+# produce the list of selected variables 
+stabs_fit$selected
+
+```
+
+
+The "cutoff" argument in the code determines the threshold for selecting features in the feature selection process. In this case, features with a "stability score" greater than 0.75 will be selected, while features with a score lower than 0.75 will be discarded. The "stability score" is a measure of how consistently a feature is selected across multiple rounds of feature selection, and is used to determine the most stable and relevant features for the analysis.
+
+The "PFER" argument in the code stands for Prediction-False-discovery-Error-Rate. It's a measure of the accuracy of the feature selection process. It's used to control the trade-off between the number of true features selected and the number of false features (features that are not actually associated with the response variable) that are included in the final feature set. In this case, the "PFER" argument is set to 0.15, which means that the algorithm should aim to keep the false discovery rate (the fraction of false features in the final feature set) below 0.15.
+
+The vertical bars in the plot represent the stability scores for each variable, indicating the proportion of subsamples in which the variable was selected. Variables with higher stability scores (i.e., bars that extend further above the stability selection cutoff line) are more likely to be important for predicting the outcome variable, while variables with lower stability scores are less important.
+
+We noted that only four exposures: exp_3, exp_12, exp_13, and exp_4 were selected from the stability selection, while most other exposures dropped out from the selection. Stability selection would be beneficial if we have very large dataset (large p/n) and provide more reliable estimates on the selection of important variables.
+
+```{r, include= FALSE}
+
+# clean everything from LASSO modelling part
+rm(lasso.fit, outcome_predict, stabs_fit, x)
+
+```
+
+## 4. Random forest
+
+Random forest analysis is a non-parametric, approach for classification and regression problems [Breiman, 2001](https://link.springer.com/content/pdf/10.1023/A:1010933404324.pdf). While it is a complex model, the basic idea is elegant and follows the simple “divide and conquer” principle (i.e., ensemble). The idea behind ensemble methods is that instead of training a single model, you train multiple models (sometimes hundreds or even thousands of models). Next, you ask the opinion of each of those models as to what the predicted output should be for
+new data. You then consider the votes from all the models when making the final prediction. The idea is that predictions informed by a majority vote will have less variance than predictions made by a lone model.
+
+Random forests are built on the same fundamental principles as decision trees and bagging. Bagging trees use random collections of variables in the process of building the tree. The introduced randomness would reduce the variance of a single tree's prediction and consequently improve the predictive performance. 
+
+However, the trees in bagging often correlate with each other (also known as tree correlation). To further reduce the variance (and hence improve the performance), the correlation should be minimised by introducing more randomness into the tree-growing process. 
+
+Random forest could achieve this in the following two ways:
+
+1. bootstrap: each tree is grown to a bootstrap re-sampled data set.
+2. split-variable randomization: at each split, the search for the split variable is limited to a random subset of *m* of the *p* variables (*p* as the total number of variables).  
+
+
+The basic algorithm for a regression random forest can be generalised as follows, (with reference to [an online tutorial](https://uc-r.github.io/random_forests))
+
+Given training data set
+Select number of trees to build (ntrees)
+ for i = 1 to ntrees do
+     |  Generate a bootstrap sample of the original data
+     |  Grow a regression tree to the bootstrapped data
+     |  for each split do
+     |  | Select m variables at random from all p variables
+        |  | Pick the best variable/split-point among the m
+        |  | Split the node into two child nodes
+        |  end
+        | Use typical tree model stopping criteria to determine when a tree is complete (but do not prune)
+  end 
+
+This simple but effective strategy leads to its successful applications in addressing various practical problems.
+
+
+We will use the following R packages to implement random forest. There are numerous R packages to implement random forest (see an [non-comprehensive list] (https://koalaverse.github.io/machine-learning-in-R/random-forest.html#random-forest-software-in-r)).
+
+
+We will first use a default RF model from the randomForest package on the training data.
+
+### 4.1 Develop first random forest model
+
+```{r build the first rf model}
+
+# we specify the formula to include all exposures and co-variates 
+my_formula <- as.formula(paste("outcome ~ ", noquote(paste(exp_var, collapse = "+")),"+", paste(cov_var, collapse = " + ")))
+
+rf <- randomForest(my_formula,
+                   data = data)
+
+varImpPlot(rf)
+# we will just use ranger R package to perform the default version of rf 
+rf_m1 <- ranger(my_formula,
+            data = data,
+            importance = "impurity") # we specify the importance model as "impurity" - the Gini index 
+
+# we normally want to further tune the obtained model so it can achieve the best possible performance with the data.
+
+
+```
+
+### 4.2 Tuning random forest models
+
+There are three other common arguments in the *range()* function.  
+
+*mtry*: number of variables to try at each split (default to m = sqrt(p)). For tuning the model, a common suggestion is to start with 5 values evenly spaced across the range from 2 to p.
+
+*num.trees*: number of trees to build (default to 500), We want enough trees to stabalize the error but using too many trees is unncessarily inefficient, especially when using large data sets.
+
+*min.node.size*: minimum number of observations in each node (default to 5 for regression).This controls the complexity of the trees. Smaller node size allows for deeper, more complex trees and smaller node results in shallower trees. This is another bias-variance trade-off where deeper trees introduce more variance (risk of overfitting) and shallower trees introduce more bias (risk of not fully capturing unique patters and relationships in the data).
+
+FYI, you could also tune the *sample.fraction* in your own study, the default is 0.632. Tuning for this parameter may be necessary with large dataset, but for the training dataset like ours, such tuning may not produce very informative results. 
+
+We will use OOB-RSME to evaluate the model performance under different combinations of the hyperparameter. OBB-RSME stands for out-of-bag error/root squar of the mean error. It is the average error for each calculated model using predictions from the trees that do not contain in their respective bootstrap samples. Lower OBB-RSME represents better model performance. 
+
+
+```{r}
+
+#######################
+#######################
+### Construct a hyper-grid, containing all different parameter combinations  
+### you should change the grid setting based on the features of the dataset
+
+hyper_grid <- expand.grid(
+  mtry       = seq(2, 28, by = 5),
+  num.trees  = seq(300, 800, by = 100),
+  min.node.size = seq(1, 12, by = 3))
+
+########################
+########################
+
+system.time(
+  for(i in 1:nrow(hyper_grid)) {
+    # train model
+    rf <- ranger(
+      formula        = my_formula,
+      data           = data,
+      num.trees      = hyper_grid$num.trees[i],
+      mtry           = hyper_grid$mtry[i],
+      min.node.size  = hyper_grid$min.node.size[i],
+      importance = 'impurity')
+    # add OOB error to grid
+    hyper_grid$OOB_RMSE[i] <- sqrt(rf$prediction.error)
+  })
+
+
+```
+
+Now that we have the "best" random forest model, we would then like to know which exposures are important variables. We do this by evaluating the Gini index produced by the using the *importance* argument within the *ranger* package. The Gini index describes the imoportance of each variable, the higher the indix, the more important the variable is in predicting the outcome.
+
+```{r}
+
+nrow(hyper_grid) # 144 models
+
+position = which.min(hyper_grid$OOB_RMSE) # we want to identify which model produces the lowest OBB_RMSE.
+
+head(hyper_grid[order(hyper_grid$OOB_RMSE),],5)  # here we show the top 5 models with the least OBB_RMSE error. 
+
+# fit best model
+rf.model <- ranger(my_formula,
+                   data = data, 
+                   num.trees = hyper_grid$num.trees[position], # use the num of trees from the tress based on the best tuning results
+                   importance = 'impurity', # The 'impurity' measure is the Gini index for classification, the variance of the responses for regression and the sum of test statistics
+                   min.node.size = hyper_grid$min.node.size[position],  # select the number of min.node.size based on the best tuning results
+                   mtry = hyper_grid$mtry[position] # select the number of variables at each split based on the best tuning results
+                   )  
+
+rf.model
+
+```
+
+```{r}
+
+vip(rf.model, geom = "point")
+
+```
+
+We noted that the orders of importance of are different from the one used in the previous random forest model with default parameter setting. For example, exposure_15 and exposure_16 are the second and third most important exposure in the previous model, but becomes the third and fourth most important exposures. Exposure_11 becomes the second most important exposure in the new model. Exposure_1 remains the most important exposure.
+
+There are also slight differences in the exposure importance ranking between the results from random forest and the single variable regression analysis, whereas exposure_4 dropped out from the random forest results. 
+
+```{r clean, include=FALSE}
+
+# Since we have the "best" performing model, we will remove other models to avoid confusion
+rm(rf, rf_m1)
+
+```
+
+
+Based on the low RMSE and the visually checked coordinance between the predicted and the actual outcome data, we could say the obtained random forest model is performing well.  
+
+### 4.3 Further interpretation of random forest model
+
+One technique that could be used to interpret random forest models is the SHAP (SHapley Additive exPlanations) values proposed by Scott M. Lundberg. SHAP measures the impact of variables taking into account the interaction with other variables. Shapley values calculate the importance of a feature by comparing what a model predicts with and without the feature. However, since the order in which a model sees features can affect its predictions, this is done in every possible order, so that the features are fairly compared. See more information about Shapley value [here](https://medium.com/@gabrieltseng/interpreting-complex-models-with-shap-values-1c187db6ec83), and [here](https://blog.datascienceheroes.com/how-to-interpret-shap-values-in-r/) and other ways to interpret the model [link](https://bradleyboehmke.github.io/HOML/iml.html#). 
+
+```{r shapley value visualisation, include=FALSE}
+
+s <- invisible(kernelshap(rf.model, data[,-1], bg_X = data))
+```
+
+
+```{r}
+
+
+# s <- invisible(kernelshap(rf.model, data[,-1], bg_X = data)) # we run this in the previous chunk
+
+sv <- shapviz(s)
+
+sv_importance(sv, kind = "bee")
+sv_dependence(sv, v = "exposure_3", color_var = "auto")
+
+```
+
+If the above chunk takes too much time for computing, considering the following chunk with application of R package fastshap, which could offer a faster implementation with approximation of the shapley values. 
+
+```{r}
+
+# to use shapley value, it is generally necessary to create seperate training and testing dataset. Since we have a small dataset we will use the full dataset as the training set, and 20% of the randomly drawed dataset as the testing data. 
+
+test_dat <- data %>% 
+  sample_frac(0.2)
+
+# here we specify the pfun that will be used for the shap explainer production
+
+pfun <- function(object, newdata) {
+  predict(object, data = newdata)$predictions
+}
+
+
+# produce shapley
+
+shap <- fastshap::explain(rf.model, 
+                     feature_names = c("exposure_3", "exposure_12", "exposure_13", "exposure_10"),
+                     X = data[,-34],
+                     nsim = 1000,
+                     pred_wrapper =  pfun,
+                     newdata = test_dat[,-34]
+                     )
+
+
+shv <- shapviz(shap, X = test_dat[,-34])
+sv_waterfall(shv)
+
+
+```
+
+For other functions with fastshap package please visit https://bgreenwell.github.io/fastshap/index.html. For further explanation of how to interpret the shapley values is beyond the scope of this tutorial. Please refer to other references (e.g., https://doi.org/10.1016/j.patter.2022.100452; https://www.nature.com/articles/s42256-019-0138-9). 
+
+
+We could also detect the pairwise interaction with the command: find.interaction from the randomForestSRC package. 
+
+```{r eval=FALSE, include=FALSE}
+
+
+# develop model again with randomForestSRC package using the previously tuned parameters so we can use the find.interaction function 
+
+rf.interaction <- rfsrc(my_formula, data = data, importance = T)
+rf.src <- rfsrc(my_formula,
+                   data = data, 
+                   ntree = hyper_grid$num.trees[position], # use the num of trees from the tress based on the best tuning results
+                   nodesize = hyper_grid$min.node.size[position],  # select the number of min.node.size based on the best tuning results
+                   mtry = hyper_grid$mtry[position], # select the number of variables at each split based on the best tuning results
+                   importance = T
+                   )  
+
+# run the find.interaction command
+find.interaction(rf.interaction, method = "vimp", nrep = 3)
+
+```
+
+
+## 5. BKMR
+
+Bayesian kernel machine regression (BKMR) is a type of statistical method that combines the principles of kernel machines and Bayesian modeling. BKMR allows for the modeling of non-linear relationships between predictor variables and an outcome of interest, making it well-suited for applications in environmental epidemiology where the relationships between exposure to environmental factors and health outcomes can be complex.
+
+In environmental epidemiology, BKMR can be used to model the association between exposure to environmental pollutants and health outcomes. For example, BKMR can be used to estimate the relationship between exposure to air pollution and incidence of cardiovascular disease or the relationship between exposure to heavy metals and risk of neurological disorders. BKMR can handle multiple exposures and multiple confounders, making it useful in the analysis of environmental health data where the relationships can be complex and involve multiple factors.
+
+Please note that not all types of data can be used for BKMR modelling. Given its high demand of computational power it cannot handle very large dataset (either large n or p). Continuous variables are generally preferred over binary ones. Here we use the same sample data to demonstract the application. 
+
+It is worthy pointing out the importance of diagnostic analysis in Bayesian models such as the BKMR. We strongly encourage readers to try R package [*bkmrhat*'](https://cran.r-project.org/web/packages/bkmrhat/vignettes/bkmrhat-vignette.html)) that enables the post-processing of bkmr outputs and overcome several limitations from the single implementation from bkmr, including: 1) no facility for running multiple chains in parallel; 2) no inference across multiple chains; 3) limited posterior summary of parameters; and 4) limited diagnostics.
+
+
+### 5.1 Develop BKMR model
+
+Please note that the following chunk will take more than few hours to run. Adjust the niter (number of iterations) according to the feature of the data and 
+
+
+```{r include=FALSE}
+
+data$sex = as.numeric(data$sex)
+data$smoking_status = as.numeric(data$smoking_status)
+
+# bkmr, note that this uses X for the covariate matrix and Z for the exposure matrix
+
+y = data$outcome # specify the outcome data
+x = as.matrix(data[,2:5])  # specify the covariates 
+z = as.matrix(data[,6:33]) # specify the exposure data
+
+# would be good to scale all exposures so they are on the same scale (the z-scores)
+
+z <- scale(z)
+ 
+# set number of iterations
+Niter <- 100 # # note that for the purpose of this tutorial the niter was set to a small number of 100, you should raise this after making sure the parameters are in order
+
+# # fit the model
+sink("nul") # redirect the output to NULL
+m <- kmbayes(y = y, Z = z, X = x, iter = Niter, varsel = F) 
+sink() # reset output to console
+
+#############
+# USE THE FOLLOWING CODE to apply multiple-chain BKMR modelling
+#############
+
+# future::plan(strategy = future::multisession) # enable parallel computation
+# 
+# # we fit an alternative model using multiple (5) chains
+# system.time(kmfit5 <- suppressMessages(kmbayes_parallel(nchains=5, y = y, Z = z, X = x, iter = 100, verbose = FALSE, varsel = FALSE))) # note that for the purpose of this tutorial the niter was set to a small number of 100, you should raise this after making sure the parameters are in order
+
+```
+
+
+### 5.2 Model diagnostics/convergence
+
+Let’s visually inspect the trace plots, showing how various parameter values change as the sampler runs.
+
+```{r}
+
+# # Check convergence of the parameters from the single chain
+TracePlot(fit = m, par= "beta",comp= 3)
+TracePlot(fit = m, par = "r", comp = 26)
+TracePlot(fit = m , par = "sigsq.eps", comp = 1)
+TracePlot(fit = m, par = "lambda", comp = 1)
+
+# USE THE FOLLOWING CODE TO check the covergence of parameters if you apply the kmfit5 (multiple chain BKMR model)/// check all lambda ///
+
+# multidiag = kmbayes_diagnose(kmfit5, warmup=0, digits_summary=2)
+# kmfit5coda = as.mcmc.list(kmfit5, iterstart = 1)
+# traceplot(kmfit5coda)
+
+```
+
+In the trace plot, there are some apparent anomalies indicating unfitted. Follow the [link](https://www.statlect.com/fundamentals-of-statistics/Markov-Chain-Monte-Carlo-diagnostics) for more details on the MCMC diagnostics. 
+
+
+### 5.3 Result presentation 
+
+```{r}
+
+# note that if you select the varsel = TRUE, then you could extract the PIPs (indicators for variable importance) 
+# ExtractPIPs(m)
+
+
+# here we extract the individual exposure-response relationship from the fitted model, noted that non-linear exp-res relationships were found for exposure_3 and exposure_10.
+
+pred.resp.univar <- PredictorResponseUnivar(fit = m)
+ggplot(pred.resp.univar, aes(z, est, ymin = est - 1.96*se, 
+                             ymax = est + 1.96*se)) + 
+    geom_smooth(stat = "identity") + 
+    facet_wrap(~variable, ncol = 4) +
+    xlab("expos") +
+    ylab("h(expos)")
+
+```
+
+PredictorResponseUnivar(fit = m): This function is used to extract the individual exposure-response relationships from the fitted BKMR model (m). It allows for the evaluation of how changes in a single exposure (holding other exposures constant) are associated with changes in the outcome.
+
+ggplot(...) + geom_smooth(stat = "identity") + facet_wrap(~variable, ncol = 4): This creates a series of plots for each exposure variable included in the BKMR model, utilizing the facet_wrap to organize the individual exposure-response plots into a grid with 4 columns. Each plot displays the estimated effect (est) of an exposure (z) on the outcome, along with the 95% confidence interval (calculated as est ± 1.96*se), where se is the standard error of the estimate.
+
+xlab("expos") + ylab("h(expos)"): These lines customize the x and y axis labels. "expos" represents the exposure levels, and "h(expos)" denotes the predicted change in the health outcome associated with each exposure level.
+
+The note mentions non-linear exposure-response relationships were found for exposure_3 and exposure_10, highlighting the model's capability to uncover complex relationships beyond linear associations.
+
+
+Here we show the overall risk from all exposures and plot the risk.
+
+```{r}
+
+risks.overall <- OverallRiskSummaries(fit = m, qs = seq(0.25, 0.75, by = 0.05), q.fixed = 0.5)
+risks.overall
+  
+ggplot(risks.overall, aes(quantile, est, ymin = est - 1.96*sd, 
+                          ymax = est + 1.96*sd)) + 
+geom_hline(yintercept = 0, lty = 2, col = "brown") +
+geom_pointrange()
+
+```
+
+OverallRiskSummaries(fit = m, qs = seq(0.25, 0.75, by = 0.05), q.fixed = 0.5): This function calculates the overall risk summary across all exposures. It estimates the risk at different quantiles (qs) of the joint distribution of exposures, allowing for the examination of the overall effect of the exposures on the outcome. q.fixed is a parameter that can be adjusted to examine the effect at a specific percentile of the exposure distribution.
+
+The subsequent ggplot call creates a plot to visualize these overall risk estimates. It plots the estimated risk (est) at each quantile of the exposure distribution (quantile), with error bars representing the 95% confidence interval (calculated as est ± 1.96*sd, where sd is the standard deviation of the estimate).
+
+geom_hline(yintercept = 0, lty = 2, col = "brown"): This adds a horizontal line at zero, serving as a reference to easily identify quantiles associated with increased or decreased risk compared to the baseline.
+
+
+
+
+
+
