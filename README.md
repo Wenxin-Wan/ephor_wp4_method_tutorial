@@ -7,7 +7,11 @@ This R tutorial aims to demonstrate how the three methods can be applied to samp
 Here you will find: 
 
 **R codes:** EPHOR WP4_tutorial for lasso, rf, bkmr.Rmd
+
 **Dataset:** data_2.xlsx
+
 **Codes with output** EPHOR WP4_tutorial for lasso, rf, bkmr.html
+
+
 
 Please feel free to get in touch if there are any suggestions for the tutorial via *w.wan@uu.nl* or *s.peters@uu.nl*.
