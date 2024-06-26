@@ -610,10 +610,10 @@ It is worthy pointing out the importance of diagnostic analysis in Bayesian mode
 
 ### 5.1 Develop BKMR model
 
-Please note that the following chunk will take more than few hours to run. Adjust the niter (number of iterations) according to the feature of the data and 
+Please note that the following chunk will take more than few hours to run. Adjust the niter (number of iterations) according to the feature of the data and the computational budget.
 
 
-```{r include=FALSE}
+```{r echo=TRUE}
 
 data$sex = as.numeric(data$sex)
 data$smoking_status = as.numeric(data$smoking_status)
